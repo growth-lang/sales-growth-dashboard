@@ -1,5 +1,9 @@
 streamlit
 pandas
 numpy
-prophet
-altair
+plotly
+statsmodels
+scikit-learn
+fpdf2
+openpyxl
+python-dateutil

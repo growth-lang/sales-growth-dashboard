@@ -191,9 +191,31 @@ def drivers_panel(weekly_df):
     imp = imp.sort_values("importance", ascending=False)
     return imp
 
-def pdf_from_text(txt:str) -> bytes:
-    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", size=12)
-    for line in txt.split("\n"): pdf.multi_cell(0, 8, txt=line)
+def pdf_from_text(txt: str) -> bytes:
+    # Replace characters Arial can't render & avoid long unbreakable tokens
+    SAFE_MAP = str.maketrans({
+        "–": "-", "—": "-", "−": "-", "•": "-",
+        "→": "->", "←": "<-", "▲": "^", "▼": "v",
+        "✓": "v", "✗": "x", "’": "'", "‘": "'", "“": '"', "”": '"',
+        "\t": "  ",
+    })
+    clean = (txt or "").translate(SAFE_MAP)
+    # Force Latin-1 (FPDF core fonts) and replace anything else
+    clean = clean.encode("latin-1", "replace").decode("latin-1")
+
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    for line in clean.split("\n"):
+        # Empty line = small vertical gap (avoids weird 1-char lines)
+        if not line.strip():
+            pdf.ln(4)
+            continue
+        pdf.multi_cell(0, 8, txt=line)
     return pdf.output(dest="S").encode("latin-1")
 
 def seed_demo(n_weeks=16):

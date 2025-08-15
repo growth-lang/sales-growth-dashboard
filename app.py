@@ -14,18 +14,30 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import streamlit as st
 from fpdf import FPDF
 
-# ---------- Page config & style ----------
-st.set_page_config(page_title="Tipsoi • Sales Growth & Forecasts", layout="wide")
-st.markdown("""
-    <style>
-    .small-note { color:#6b7280; font-size:12px; }
-    .kpi-card { padding:14px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; }
-    .ok   { color:#059669; } .down { color:#dc2626; } .flat { color:#6b7280; }
-    </style>
-""", unsafe_allow_html=True)
+def pdf_from_text(txt: str) -> bytes:
+    SAFE_MAP = str.maketrans({
+        "–": "-", "—": "-", "−": "-",
+        "→": "->", "←": "<-",
+        "▲": "^", "▼": "v", "✓": "v", "✗": "x",
+        "’": "'", "‘": "'", "“": '"', "”": '"',
+        "\t": "  ",
+    })
+    clean = (txt or "").translate(SAFE_MAP)
+    clean = clean.encode("latin-1", "replace").decode("latin-1")  # force core-font charset
 
-# ---------- Helpers ----------
-EXPECTED = ["date","team","mql","sql","work_orders","mrr_added_bdt","notes"]
+    pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    for line in clean.split("\n"):
+        if not line.strip():
+            pdf.ln(4)  # blank line spacing
+            continue
+        pdf.multi_cell(0, 8, txt=line)
+    return pdf.output(dest="S").encode("latin-1")
+
 
 def parse_upload(file):
     if file is None: return None

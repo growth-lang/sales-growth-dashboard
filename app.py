@@ -1,4 +1,7 @@
-# app.py — Tipsoi Sales Growth (polished)
+# app.py — Tipsoi Sales Growth • Forecasts & Insights
+# Polished layout, cohort/funnel, 4-week forecasts w/ 95% bands, anomalies, drivers,
+# manual notes, CSV + PDF export (ASCII-safe to avoid FPDF Unicode crash).
+
 import math
 from io import BytesIO
 from datetime import datetime
@@ -14,30 +17,18 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import streamlit as st
 from fpdf import FPDF
 
-def pdf_from_text(txt: str) -> bytes:
-    SAFE_MAP = str.maketrans({
-        "–": "-", "—": "-", "−": "-",
-        "→": "->", "←": "<-",
-        "▲": "^", "▼": "v", "✓": "v", "✗": "x",
-        "’": "'", "‘": "'", "“": '"', "”": '"',
-        "\t": "  ",
-    })
-    clean = (txt or "").translate(SAFE_MAP)
-    clean = clean.encode("latin-1", "replace").decode("latin-1")  # force core-font charset
+# ---------- Page config & style ----------
+st.set_page_config(page_title="Tipsoi • Sales Growth & Forecasts", layout="wide")
+st.markdown("""
+    <style>
+    .small-note { color:#6b7280; font-size:12px; }
+    .kpi-card { padding:14px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; }
+    .ok   { color:#059669; } .down { color:#dc2626; } .flat { color:#6b7280; }
+    </style>
+""", unsafe_allow_html=True)
 
-    pdf = FPDF()
-    pdf.set_margins(15, 15, 15)
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-
-    for line in clean.split("\n"):
-        if not line.strip():
-            pdf.ln(4)  # blank line spacing
-            continue
-        pdf.multi_cell(0, 8, txt=line)
-    return pdf.output(dest="S").encode("latin-1")
-
+# ---------- Helpers ----------
+EXPECTED = ["date","team","mql","sql","work_orders","mrr_added_bdt","notes"]
 
 def parse_upload(file):
     if file is None: return None
@@ -176,18 +167,15 @@ def cohort_heatmaps(weekly_df, horizon=8):
         sql_mat.append(row_sql); wo_mat.append(row_wo)
     y = [str(c) for c in cohorts]; x = list(range(horizon+1))
     f1 = px.imshow(np.array(sql_mat), x=x, y=y, origin="lower",
-                   labels=dict(x="Weeks since cohort", y="Cohort (MQL week)", color="% → SQL"),
-                   title="Cohort: % of MQL → SQL")
+                   labels=dict(x="Weeks since cohort", y="Cohort (MQL week)", color="% -> SQL"),
+                   title="Cohort: % of MQL -> SQL")
     f2 = px.imshow(np.array(wo_mat), x=x, y=y, origin="lower",
-                   labels=dict(x="Weeks since cohort", y="Cohort (MQL week)", color="% → WO"),
-                   title="Cohort: % of MQL → Work Orders")
+                   labels=dict(x="Weeks since cohort", y="Cohort (MQL week)", color="% -> WO"),
+                   title="Cohort: % of MQL -> Work Orders")
     return f1, f2
 
 def drivers_panel(weekly_df):
-    """
-    Lightweight 'drivers' using lagged features and LassoCV.
-    Not causal; just highlights correlational contributors to Work Orders.
-    """
+    """Correlational 'drivers' using lagged features & LassoCV."""
     df = weekly_df.sort_values("week_start").copy()
     df["mql_l1"] = df["mql"].shift(1)
     df["sql_l1"] = df["sql"].shift(1)
@@ -200,22 +188,20 @@ def drivers_panel(weekly_df):
     coefs = pipe.named_steps["lr"].coef_
     names = ["mql","sql","mrr","mql_l1","sql_l1","mrr_l1"]
     imp = pd.DataFrame({"feature":names,"importance":np.abs(coefs)})
-    imp = imp.sort_values("importance", ascending=False)
-    return imp
+    return imp.sort_values("importance", ascending=False)
 
+# --- ASCII-safe PDF builder (prevents FPDF Unicode crash) ---
 def pdf_from_text(txt: str) -> bytes:
-    # Replace characters Arial can't render & avoid long unbreakable tokens
     SAFE_MAP = str.maketrans({
-        "–": "-", "—": "-", "−": "-", "•": "-",
-        "→": "->", "←": "<-", "▲": "^", "▼": "v",
-        "✓": "v", "✗": "x", "’": "'", "‘": "'", "“": '"', "”": '"',
+        "–": "-", "—": "-", "−": "-",
+        "→": "->", "←": "<-",
+        "▲": "^", "▼": "v", "✓": "v", "✗": "x",
+        "’": "'", "‘": "'", "“": '"', "”": '"',
         "\t": "  ",
     })
     clean = (txt or "").translate(SAFE_MAP)
-    # Force Latin-1 (FPDF core fonts) and replace anything else
     clean = clean.encode("latin-1", "replace").decode("latin-1")
 
-    from fpdf import FPDF
     pdf = FPDF()
     pdf.set_margins(15, 15, 15)
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -223,7 +209,6 @@ def pdf_from_text(txt: str) -> bytes:
     pdf.set_font("Arial", size=12)
 
     for line in clean.split("\n"):
-        # Empty line = small vertical gap (avoids weird 1-char lines)
         if not line.strip():
             pdf.ln(4)
             continue
@@ -231,7 +216,6 @@ def pdf_from_text(txt: str) -> bytes:
     return pdf.output(dest="S").encode("latin-1")
 
 def seed_demo(n_weeks=16):
-    # weekly synthetic with trend+noise
     rng = np.random.default_rng(7)
     start = pd.to_datetime("2025-03-03")  # Monday
     weeks = [start + pd.Timedelta(7*i, "D") for i in range(n_weeks)]
@@ -284,9 +268,7 @@ if "manual_rows" in st.session_state and st.session_state["manual_rows"]:
     man = auto_map_columns(pd.DataFrame(st.session_state["manual_rows"]))
 sess = st.session_state.get("data")
 if sess is not None:
-    # from demo button
     sess = auto_map_columns(sess)
-
 dfs = [x for x in [base, man, sess] if x is not None and not x.empty]
 if not dfs:
     st.info("Upload CSV/XLSX, click **Load demo data**, or add rows from the sidebar to begin.")
@@ -318,12 +300,11 @@ st.dataframe(weekly, use_container_width=True, hide_index=True)
 
 # KPI cards (last vs prev week/month)
 if not weekly.empty:
-    # pick compare window
     by = "week_start"
     last_key = weekly[by].max()
     if agg_choice=="WoW":
         prev_key = weekly.loc[weekly[by] < last_key, by].max() if len(weekly)>=2 else None
-    else:  # MoM: prev ~ 4 weeks earlier
+    else:  # MoM ~ 4 weeks earlier
         prev_key = weekly.loc[weekly[by] <= (pd.Timestamp(last_key)-pd.Timedelta(days=28)).date(), by].max()
 
     w_last = weekly[weekly[by]==last_key].sum(numeric_only=True)
@@ -331,8 +312,7 @@ if not weekly.empty:
 
     def kpi(label, curr, prev, money=False):
         d, p = (None, None) if w_prev is None else wow(prev, curr)
-        arrow = "↔"
-        css = "flat"
+        arrow = "↔"; css = "flat"
         if p is not None:
             if p > 0: arrow, css = "▲", "ok"
             elif p < 0: arrow, css = "▼", "down"
@@ -401,7 +381,7 @@ with tab_funnel:
     ).sort_index()
     rates = (rates*100).round(2)
     st.dataframe(rates.reset_index().rename(columns={
-        "mql_to_sql":"MQL→SQL %", "sql_to_wo":"SQL→WO %", "lead_to_wo":"Lead→WO %"
+        "mql_to_sql":"MQL->SQL %", "sql_to_wo":"SQL->WO %", "lead_to_wo":"Lead->WO %"
     }), use_container_width=True, hide_index=True)
 
 with tab_cohort:
@@ -418,7 +398,6 @@ with tab_cohort:
 
 with tab_insights:
     st.subheader("Bottlenecks & Drivers")
-    # Biggest WoW drop in rates
     wk = weekly.sort_values("week_start").copy()
     wk["mql_to_sql_pct"] = wk["mql_to_sql_rate"]*100
     wk["sql_to_wo_pct"]  = wk["sql_to_wo_rate"]*100
@@ -426,23 +405,20 @@ with tab_insights:
     if len(wk) >= 2:
         wk["wo_delta"] = wk["work_orders"].diff()
         wo_change = wk[["week_start","wo_delta"]].tail(1).values[0]
-    # Text summary
     bullets = []
     if wo_change is not None:
         d = int(wo_change[1])
         if d < 0: bullets.append(f"Work Orders fell by {abs(d)} vs prior week.")
         elif d > 0: bullets.append(f"Work Orders rose by {d} vs prior week.")
         else: bullets.append("Work Orders unchanged vs prior week.")
-    # rate movements
     if len(wk) >= 2:
-        for col, lbl in [("mql_to_sql_pct","MQL→SQL"), ("sql_to_wo_pct","SQL→WO")]:
+        for col, lbl in [("mql_to_sql_pct","MQL->SQL"), ("sql_to_wo_pct","SQL->WO")]:
             prev, curr = wk[col].iloc[-2], wk[col].iloc[-1]
             if not (pd.isna(prev) or pd.isna(curr)):
-                if curr < prev: bullets.append(f"{lbl} rate ↓ {prev-curr:.1f} pts — potential bottleneck.")
-                elif curr > prev: bullets.append(f"{lbl} rate ↑ {curr-prev:.1f} pts.")
+                if curr < prev: bullets.append(f"{lbl} rate down {prev-curr:.1f} pts — potential bottleneck.")
+                elif curr > prev: bullets.append(f"{lbl} rate up {curr-prev:.1f} pts.")
     if bullets:
         st.markdown("- " + "\n- ".join(bullets))
-    # Correlational drivers
     imp = drivers_panel(weekly.groupby("week_start", as_index=False).agg({
         "mql":"sum","sql":"sum","work_orders":"sum","mrr_added_bdt":"sum"}))
     if imp is not None:
@@ -450,8 +426,6 @@ with tab_insights:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Need ~8+ weekly points for drivers.")
-
-    # Manual note per week
     st.markdown("### Manual reasoning (optional)")
     st.caption("Add your context/explanation; it will appear in PDF export.")
     st.session_state.setdefault("notes", {})
@@ -464,16 +438,12 @@ with tab_insights:
 
 with tab_export:
     st.subheader("Export")
-    # Weekly table CSV
     out_csv = weekly.to_csv(index=False).encode("utf-8")
     st.download_button("Download weekly aggregates (CSV)", out_csv, "weekly_aggregates.csv", "text/csv")
-    # Notes CSV
     if st.session_state.get("notes"):
         notes_df = pd.DataFrame([{"week_start":k,"note":v} for k,v in st.session_state["notes"].items()])
         st.download_button("Download manual notes (CSV)", notes_df.to_csv(index=False).encode("utf-8"),
                            "manual_notes.csv","text/csv")
-
-    # PDF summary (last week)
     if not weekly.empty:
         last = weekly["week_start"].max()
         wk = weekly[weekly["week_start"]==last].groupby("week_start", as_index=False).agg({
@@ -484,9 +454,9 @@ with tab_export:
         lines = [
             f"Week starting: {wk['week_start']}",
             f"MQL: {int(wk['mql'])}",
-            f"SQL: {int(wk['sql'])} | MQL→SQL: {wk['mql_to_sql_rate']*100:.1f}%",
-            f"Work Orders: {int(wk['work_orders'])} | SQL→WO: {wk['sql_to_wo_rate']*100:.1f}%",
-            f"Lead→WO: {wk['lead_to_wo_rate']*100:.1f}%",
+            f"SQL: {int(wk['sql'])} | MQL->SQL: {wk['mql_to_sql_rate']*100:.1f}%",
+            f"Work Orders: {int(wk['work_orders'])} | SQL->WO: {wk['sql_to_wo_rate']*100:.1f}%",
+            f"Lead->WO: {wk['lead_to_wo_rate']*100:.1f}%",
             f"MRR added: {wk['mrr_added_bdt']:,.0f} {currency}",
         ]
         if not math.isnan(wk["weekly_mrr_growth_pct"]):
